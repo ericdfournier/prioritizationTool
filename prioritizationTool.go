@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gonum.org/v1/gonum/mat"
+	"gopkg.in/cheggaaa/pb.v1"
 )
 
 // set global constants
@@ -119,6 +120,10 @@ func LoadProfileData(
 	// preallocated supply matrix
 	profileMat := mat.NewDense(1, hrs, nil)
 
+	// allocate status bar
+	bar := pb.StartNew(rows)
+	bar.ShowTimeLeft = false
+
 	// write values from rawCSVdata to domain matrix
 	for i := 0; i < rows; i++ {
 
@@ -132,10 +137,13 @@ func LoadProfileData(
 
 		// write value to matrix
 		profileMat.Set(0, i, val)
+
+		// increment status bar
+		bar.Increment()
 	}
 
-	// print status
-	fmt.Println("\tProfile Data Loaded")
+	// close status bar
+	bar.FinishPrint("\tProfile Data Loaded")
 
 	return profileMat
 }
@@ -172,6 +180,10 @@ func LoadCircuitGroupData(
 	circuitGroupPool := make([]*CircuitGroup, cnt)
 	circuitGroupChan := make(chan int, cnt)
 
+	// allocate status bar
+	bar := pb.StartNew(rows)
+	bar.ShowTimeLeft = false
+
 	// write values from rawCSVdata to domain matrix
 	for i := 0; i < rows; i++ {
 
@@ -197,10 +209,13 @@ func LoadCircuitGroupData(
 		circuitGroupPool[key-1] = NewCircuitGroup(cgid, count)
 		circuitGroupChan <- key - 1
 
+		// increment bar
+		bar.Increment()
+
 	}
 
 	// print status
-	fmt.Println("\tCircuit Group Data Loaded")
+	bar.FinishPrint("\tCircuit Group Data Loaded")
 
 	return rows, circuitGroupPool, circuitGroupChan
 
@@ -234,6 +249,10 @@ func LoadParcelData(
 
 	// initialize output matrix
 	rows := len(rawParcelData)
+
+	// allocate status bar
+	bar := pb.StartNew(rows)
+	bar.ShowTimeLeft = false
 
 	// write values from rawCSVdata to domain matrix
 	for i := 0; i < rows; i++ {
@@ -275,10 +294,13 @@ func LoadParcelData(
 
 		// generate new parcel type
 		circuitGroupPool[key-1].Parcels <- NewParcel(pid, cgid, supply, demand)
+
+		// increment bar
+		bar.Increment()
 	}
 
 	// print status
-	fmt.Println("\tParcel Data Loaded")
+	bar.FinishPrint("\tParcel Data Loaded")
 
 	return circuitGroupPool
 
@@ -377,7 +399,8 @@ func Worker(
 	supplyProfile, demandProfile *mat.Dense,
 	circuitGroupPool []*CircuitGroup,
 	circuitGroupChan chan int,
-	results chan *CircuitGroup) {
+	results chan *CircuitGroup,
+	bar *pb.ProgressBar) {
 
 	// defer waitgroup closure
 	defer workerWaitGroup.Done()
@@ -407,8 +430,8 @@ func Worker(
 		// Write to results channel
 		results <- cg
 
-		// print status
-		fmt.Printf("\tCircuit Group: %v Finished \n", key)
+		// increment bar
+		bar.Increment()
 	}
 
 	return
@@ -482,6 +505,10 @@ func main() {
 	// create mapper wait group
 	var workerWaitGroup sync.WaitGroup
 
+	// initialize progress bar
+	bar := pb.StartNew(len(circuitGroupChan))
+	bar.ShowTimeLeft = false
+
 	// enter parallel map loop
 	for m := 0; m <= limit; m++ {
 
@@ -495,7 +522,8 @@ func main() {
 			demandProfile,
 			circuitGroupPool,
 			circuitGroupChan,
-			results)
+			results,
+			bar)
 	}
 
 	// launch a monitor mapper to synchronize the wait group
@@ -508,7 +536,7 @@ func main() {
 	WriteCircuitGroupData(results, *resultsOutputPath)
 
 	// print status
-	log.Println("Finished Work!")
+	bar.FinishPrint("\tFinished Work")
 
 	// stop timer and print to console
 	elapsed := time.Since(start)
