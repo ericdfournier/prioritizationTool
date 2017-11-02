@@ -454,19 +454,19 @@ func main() {
 	// set input filepath cli flags
 	resultsOutputPath := flag.String("o",
 		filepath.Join(base, "results.csv"),
-		"User must supply the local filepath for the output results csv file")
-	supplyProfilePath := flag.String("sp",
+		"Filepath for the output results csv file")
+	supplyProfilePath := flag.String("s",
 		filepath.Join(base, "supply_profile.csv"),
-		"User must supply the local filepath to the supply profile csv file")
-	demandProfilePath := flag.String("dp",
+		"Filepath to the supply profile csv file")
+	demandProfilePath := flag.String("d",
 		filepath.Join(base, "demand_profile.csv"),
-		"User must supply the local filepath to the demand profile csv file")
-	circuitGroupDataPath := flag.String("cg",
+		"Filepath to the demand profile csv file")
+	circuitGroupDataPath := flag.String("c",
 		filepath.Join(base, "circuit_groups.csv"),
-		"User must supply the local filepath to the circuit group csv file")
+		"Filepath to the circuit group csv file")
 	parcelDataPath := flag.String("p",
 		filepath.Join(base, "parcels.csv"),
-		"User must supply the local filepath to the parcel csv file")
+		"Filepath to the parcel csv file")
 
 	// parse cli input flags
 	flag.Parse()
