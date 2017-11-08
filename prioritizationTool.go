@@ -22,20 +22,17 @@ const cnt int = 1752 // max circuit group index
 
 // Parcel type
 type Parcel struct {
-	ParcelID       string     // parcel id
-	CircuitGroupID string     // circuit group id
-	AnnualSupply   float64    // annual rooftop solar output energy supply in kWh
-	AnnualDemand   float64    // annual building account energy demand in kWh
-	HourlySupply   *mat.Dense // hourly rooftop solar output energy supply in kWh
-	HourlyDemand   *mat.Dense // hourly building account energy demand in kWh
-	HourlyNet      *mat.Dense // hourly net solar output to the grid in kWh
+	ParcelID       string  // parcel id
+	CircuitGroupID string  // circuit group id
+	AnnualSupply   float64 // annual rooftop solar output energy supply in kWh
+	AnnualDemand   float64 // annual building account energy demand in kWh
 }
 
 // CircuitGroup type
 type CircuitGroup struct {
 	CircuitGroupID     string       // circuit group id
 	ParcelCount        int          // parcel count
-	Parcels            chan *Parcel // collection of parcels within the circuit group
+	Parcels            chan *Parcel // collection of parcels within the cg
 	AnnualNetSupply    float64      // annual total net grid exports
 	MaxHourlyNetSupply float64      // net grid exports in worst case hour
 }
@@ -46,22 +43,12 @@ func NewParcel(
 	cgID string,
 	anSupply, anDemand float64) *Parcel {
 
-	// set default parameter values
-	var (
-		hrSupply *mat.Dense
-		hrDemand *mat.Dense
-		hrNet    *mat.Dense
-	)
-
 	// return output
 	return &Parcel{
 		ParcelID:       pID,
 		CircuitGroupID: cgID,
 		AnnualSupply:   anSupply,
 		AnnualDemand:   anDemand,
-		HourlySupply:   hrSupply,
-		HourlyDemand:   hrDemand,
-		HourlyNet:      hrNet,
 	}
 }
 
@@ -118,7 +105,7 @@ func LoadProfileData(
 	rows := len(rawProfileData)
 
 	// preallocated supply matrix
-	profileMat := mat.NewDense(1, hrs, nil)
+	profileVec := mat.NewDense(hrs, 1, nil)
 
 	// allocate status bar
 	bar := pb.StartNew(rows)
@@ -136,7 +123,7 @@ func LoadProfileData(
 		}
 
 		// write value to matrix
-		profileMat.Set(0, i, val)
+		profileVec.Set(i, 0, val)
 
 		// increment status bar
 		bar.Increment()
@@ -145,7 +132,7 @@ func LoadProfileData(
 	// close status bar
 	bar.FinishPrint("\tProfile Data Loaded")
 
-	return profileMat
+	return profileVec
 }
 
 // LoadCircuitGroupData function
@@ -211,7 +198,6 @@ func LoadCircuitGroupData(
 
 		// increment bar
 		bar.Increment()
-
 	}
 
 	// print status
@@ -297,13 +283,13 @@ func LoadParcelData(
 
 		// increment bar
 		bar.Increment()
+
 	}
 
 	// print status
 	bar.FinishPrint("\tParcel Data Loaded")
 
 	return circuitGroupPool
-
 }
 
 // WriteCircuitGroupData function
@@ -342,11 +328,12 @@ func WriteCircuitGroupData(
 
 		// perform string conversions where necessary
 		cgidString := r.CircuitGroupID
+		cgCountString := strconv.Itoa(r.ParcelCount)
 		anNetString := strconv.FormatFloat(r.AnnualNetSupply, 'f', 8, 64)
 		anMaxHourString := strconv.FormatFloat(r.MaxHourlyNetSupply, 'f', 8, 64)
 
 		// write strings to file
-		err := circuitGroupWriter.Write([]string{cgidString, anNetString, anMaxHourString})
+		err := circuitGroupWriter.Write([]string{cgidString, cgCountString, anNetString, anMaxHourString})
 		if err != nil {
 			log.Println(err)
 			os.Exit(1)
@@ -376,23 +363,6 @@ func MaxParallelism() int {
 	return numCPU
 }
 
-// HourlyExpansion method
-func (p Parcel) HourlyExpansion(
-	supplyProfile, demandProfile *mat.Dense) *Parcel {
-
-	// allocate empty expanded hourly arrays
-	p.HourlySupply = mat.NewDense(1, hrs, nil)
-	p.HourlyDemand = mat.NewDense(1, hrs, nil)
-	p.HourlyNet = mat.NewDense(1, hrs, nil)
-
-	// perform net output calculations
-	p.HourlySupply.Scale(p.AnnualSupply, supplyProfile)
-	p.HourlyDemand.Scale(p.AnnualDemand, demandProfile)
-	p.HourlyNet.Sub(p.HourlySupply, p.HourlyDemand)
-
-	return &p
-}
-
 // Worker function
 func Worker(
 	workerWaitGroup *sync.WaitGroup,
@@ -411,21 +381,44 @@ func Worker(
 		// dereference the circuit group for expansion
 		cg := circuitGroupPool[key]
 
-		// Allocate empty parcel hourly net export matrix
-		parcelMat := mat.NewDense(cg.ParcelCount, hrs, nil)
+		// Allocate annual supply and demand vectors
+		parcelDemVec := mat.NewDense(1, cg.ParcelCount, nil)
+		parcelSupVec := mat.NewDense(1, cg.ParcelCount, nil)
+
+		// Allocate receiver matrices
+		parcelSupMat := mat.NewDense(hrs, cg.ParcelCount, nil)
+		parcelDemMat := mat.NewDense(hrs, cg.ParcelCount, nil)
+		parcelNetMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 
 		// Loop through parcels and populate matrix
 		for i := 0; i < cg.ParcelCount; i++ {
 			p := <-cg.Parcels
-			p = p.HourlyExpansion(supplyProfile, demandProfile)
-			parcelMat.SetRow(i, p.HourlyNet.RawRowView(0))
+			parcelDemVec.Set(0, i, p.AnnualDemand)
+			parcelSupVec.Set(0, i, p.AnnualSupply)
 		}
 
-		// Compute Annual Net supply
-		cg.AnnualNetSupply = mat.Sum(parcelMat)
+		// Compute matrix multiplications
+		parcelDemMat.Mul(demandProfile, parcelDemVec)
+		parcelSupMat.Mul(supplyProfile, parcelSupVec)
 
-		// Compute Maximum Hour and Maximum Net Supply
-		cg.MaxHourlyNetSupply = mat.Norm(parcelMat, 1)
+		// subtract demand matrix from supply matrix
+		parcelNetMat.Sub(parcelSupMat, parcelDemMat)
+
+		// Compute Annual Net supply
+		cg.AnnualNetSupply = mat.Sum(parcelNetMat) * 0.001 // convert to MW
+
+		// Allocate circuit group receiver
+		cgNetVec := mat.NewDense(hrs, 1, nil)
+
+		// Compute net supply per hour
+		for j := 0; j < hrs; j++ {
+			hourSlice := parcelNetMat.RawRowView(j)
+			hourVec := mat.NewDense(cg.ParcelCount, 1, hourSlice)
+			cgNetVec.Set(j, 0, mat.Sum(hourVec))
+		}
+
+		// write maximum hourly net supply
+		cg.MaxHourlyNetSupply = mat.Max(cgNetVec) * 0.001 // convert to MW
 
 		// Write to results channel
 		results <- cg
