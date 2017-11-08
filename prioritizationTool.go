@@ -266,7 +266,7 @@ func LoadParcelData(
 		}
 
 		// scrub null values
-		if demand == -7777.0 {
+		if demand < 0.0 {
 			supply = 0.0
 			demand = 0.0
 		}
