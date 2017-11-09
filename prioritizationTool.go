@@ -164,7 +164,7 @@ func LoadCircuitGroupData(
 	rows := len(rawCircuitGroupData)
 
 	// initialize circuit group pool syncronous map
-	circuitGroupPool := make([]*CircuitGroup, cnt)
+	circuitGroupPool := make([]*CircuitGroup, cnt, cnt)
 	circuitGroupChan := make(chan int, cnt)
 
 	// allocate status bar
@@ -267,8 +267,12 @@ func LoadParcelData(
 
 		// scrub null values
 		if demand < 0.0 {
-			supply = 0.0
 			demand = 0.0
+		}
+
+		// set supply to zero if demand missing
+		if demand == 0.0 {
+			supply = 0.0
 		}
 
 		// generate map key
