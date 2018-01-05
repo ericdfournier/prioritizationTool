@@ -371,7 +371,8 @@ func WriteCircuitGroupData(
 		anMaxHourString := strconv.FormatFloat(r.MaxHourlyNetSupply, 'f', 8, 64)
 
 		// write strings to annual file
-		err := circuitGroupAnnualWriter.Write([]string{cgidString, cgCountString, anNetString, anMaxHourString})
+		err := circuitGroupAnnualWriter.Write(
+			[]string{cgidString, cgCountString, anNetString, anMaxHourString})
 		if err != nil {
 			log.Println(err)
 			os.Exit(1)
@@ -495,24 +496,24 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// get parent directory
+	// get working directory
 	base := path.Dir(wd)
 
 	// set input filepath cli flags
 	resultsOutputPath := flag.String("o",
-		filepath.Join(base, "output/results.csv"),
+		filepath.Join(base, "out/results.csv"),
 		"Filepath for the output results csv file")
 	supplyProfilePath := flag.String("s",
-		filepath.Join(base, "input/supply_profile.csv"),
+		filepath.Join(base, "in/supply_profile.csv"),
 		"Filepath to the supply profile csv file")
 	demandProfilePath := flag.String("d",
-		filepath.Join(base, "input/demand_profile.csv"),
+		filepath.Join(base, "in/demand_profile.csv"),
 		"Filepath to the demand profile csv file")
 	circuitGroupDataPath := flag.String("c",
-		filepath.Join(base, "input/circuit_groups.csv"),
+		filepath.Join(base, "in/circuit_groups.csv"),
 		"Filepath to the circuit group csv file")
 	parcelDataPath := flag.String("p",
-		filepath.Join(base, "input/parcels.csv"),
+		filepath.Join(base, "in/parcels.csv"),
 		"Filepath to the parcel csv file")
 
 	// parse cli input flags
