@@ -19,36 +19,77 @@ import (
 )
 
 // set global constants
-const hrs int = 8760 // hours per year
-const cnt int = 1752 // max circuit group index
+const   hrs             int = 8760      // hours per year
+const   cnt             int = 1752      // max circuit group index
+
+// Profile map
+
+type ProfileMap struct {
+    sync.Map
+}
+
+// Profile type
+type Profile struct{
+    ProfileUsetype      string          // profile usetype
+    HourlyFraction      *mat.Dense      // hourly fraction of supply or demand, unitless
+}
 
 // Parcel type
 type Parcel struct {
-	ParcelID       string  // parcel id
-	CircuitGroupID string  // circuit group id
-	AnnualSupply   float64 // annual rooftop solar output energy supply in kWh
-	AnnualDemand   float64 // annual building account energy demand in kWh
+	ParcelID            string          // parcel id
+    ParcelUsetype       string          // parcel usetype category 
+	CircuitGroupID      string          // circuit group id
+	AnnualSupply        float64         // annual rooftop solar output energy supply in kWh
+	AnnualDemand        float64         // annual building account energy demand in kWh
 }
 
 // CircuitGroup type
 type CircuitGroup struct {
-	CircuitGroupID     string       // circuit group id
-	ParcelCount        int          // parcel count
-	Parcels            chan *Parcel // collection of parcels within the cg
-	HourlyNetSupply    *mat.Dense
-	AnnualNetSupply    float64 // annual total net grid exports
-	MaxHourlyNetSupply float64 // net grid exports in worst case hour
+	CircuitGroupID      string          // circuit group id
+	ParcelCount         int             // parcel count
+	Parcels             chan *Parcel    // collection of parcels within the cg
+	HourlyNetSupply     *mat.Dense      // annual hourly net supply
+	AnnualNetSupply     float64         // annual total net grid exports
+	MaxHourlyNetSupply  float64         // net grid exports in worst case hour
+}
+
+// Add method for profileMap
+func (m *ProfileMap) Add(key, value interface{}) {
+
+    // Attempt to load key value
+    m.Map.Store(key, value)
+
+    // return status
+    return
+}
+
+// NewProfile generator
+func NewProfile(
+    pUse                 string) *Profile {
+
+    // allocate empty hourly fraction array
+    var (
+        hrFraction = mat.NewDense(1, hrs, nil)
+    )
+
+    // return output
+    return &Profile{
+        ProfileUsetype: pUse,
+        HourlyFraction: hrFraction,
+    }
 }
 
 // NewParcel generator
 func NewParcel(
-	pID string,
-	cgID string,
-	anSupply, anDemand float64) *Parcel {
+	pID                 string,
+    pUse                string,
+	cgID                string,
+	anSupply, anDemand  float64) *Parcel {
 
 	// return output
 	return &Parcel{
 		ParcelID:       pID,
+        ParcelUsetype:  pUse,
 		CircuitGroupID: cgID,
 		AnnualSupply:   anSupply,
 		AnnualDemand:   anDemand,
@@ -81,8 +122,8 @@ func NewCircuitGroup(
 	}
 }
 
-// LoadProfileData function
-func LoadProfileData(
+// LoadSupplyProfileData function
+func LoadSupplyProfileData(
 	profilePath string) *mat.Dense {
 
 	// open supply profile file
@@ -113,11 +154,11 @@ func LoadProfileData(
 	profileVec := mat.NewDense(hrs, 1, nil)
 
 	// allocate status bar
-	bar := pb.StartNew(rows)
+	bar := pb.StartNew(rows-1)
 	bar.ShowTimeLeft = false
 
 	// write values from rawCSVdata to domain matrix
-	for i := 0; i < rows; i++ {
+	for i := 1; i < rows; i++ {
 
 		// get string values and convert to float
 		valStr := rawProfileData[i][0]
@@ -128,16 +169,94 @@ func LoadProfileData(
 		}
 
 		// write value to matrix
-		profileVec.Set(i, 0, val)
+		profileVec.Set(i-1, 0, val)
 
 		// increment status bar
 		bar.Increment()
 	}
 
 	// close status bar
-	bar.FinishPrint("\tProfile Data Loaded")
+	bar.FinishPrint("\tSupply Profile Data Loaded")
 
 	return profileVec
+}
+
+// LoadDemandProfileData function
+func LoadDemandProfileData(
+	profilePath string) *ProfileMap {
+
+	// open supply profile file
+	profileFile, err := os.Open(profilePath)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
+	// close files on completion
+	defer profileFile.Close()
+
+	// generate new reader from open supply file
+	profileReader := csv.NewReader(profileFile)
+	profileReader.FieldsPerRecord = -1
+
+	// use reader to read raw csv data
+	rawProfileData, err := profileReader.ReadAll()
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
+	// initialize output matrix
+	rows := len(rawProfileData)
+    cols := len(rawProfileData[0])
+
+	// preallocated profile map
+    profileMap := &ProfileMap{}
+
+	// allocate status bar
+	bar := pb.StartNew((rows*cols)-cols)
+	bar.ShowTimeLeft = false
+
+    // loop through columns in data
+    for j := 0; j < cols; j++ {
+
+        // preallocated profile matrix
+	    profileVec := mat.NewDense(1, hrs, nil)
+
+        // get profile id
+        profileUsetype := rawProfileData[0][j]
+
+	    // loop through rows in column
+	    for i := 1; i < rows; i++ {
+
+		    // get string values and convert to float
+		    valStr := rawProfileData[i][j]
+		    val, err := strconv.ParseFloat(valStr, 64)
+		    if err != nil {
+			    log.Println(err)
+			    os.Exit(1)
+		    }
+
+		    // write value to matrix
+		    profileVec.Set(0, i-1, val)
+
+		    // increment status bar
+		    bar.Increment()
+        }
+
+        // write data to profile
+        profile := NewProfile(profileUsetype)
+        profile.HourlyFraction = profileVec
+
+        // map profile
+        profileMap.Add(profileUsetype, profile)
+
+	}
+
+	// close status bar
+	bar.FinishPrint("\tDemand Profile Data Loaded")
+
+	return profileMap
 }
 
 // LoadCircuitGroupData function
@@ -173,11 +292,11 @@ func LoadCircuitGroupData(
 	circuitGroupChan := make(chan int, cnt)
 
 	// allocate status bar
-	bar := pb.StartNew(rows)
+	bar := pb.StartNew(rows-1)
 	bar.ShowTimeLeft = false
 
 	// write values from rawCSVdata to domain matrix
-	for i := 0; i < rows; i++ {
+	for i := 1; i < rows; i++ {
 
 		// get string values
 		cgid := rawCircuitGroupData[i][0]
@@ -208,7 +327,7 @@ func LoadCircuitGroupData(
 	// print status
 	bar.FinishPrint("\tCircuit Group Data Loaded")
 
-	return rows, circuitGroupPool, circuitGroupChan
+	return rows-1, circuitGroupPool, circuitGroupChan
 
 }
 
@@ -242,20 +361,23 @@ func LoadParcelData(
 	rows := len(rawParcelData)
 
 	// allocate status bar
-	bar := pb.StartNew(rows)
+	bar := pb.StartNew(rows-1)
 	bar.ShowTimeLeft = false
 
 	// write values from rawCSVdata to domain matrix
-	for i := 0; i < rows; i++ {
+	for i := 1; i < rows; i++ {
 
 		// get string values and convert to float
 		pid := rawParcelData[i][0]
 
+        // get string values
+        puse := rawParcelData[i][1]
+
 		// get string values
-		cgid := rawParcelData[i][1]
+		cgid := rawParcelData[i][2]
 
 		// get string values and convert to float
-		supplyStr := rawParcelData[i][2]
+		supplyStr := rawParcelData[i][3]
 		supply, err := strconv.ParseFloat(supplyStr, 64)
 		if err != nil {
 			log.Println(err)
@@ -263,7 +385,7 @@ func LoadParcelData(
 		}
 
 		// get string values and convert to float
-		demandStr := rawParcelData[i][3]
+		demandStr := rawParcelData[i][4]
 		demand, err := strconv.ParseFloat(demandStr, 64)
 		if err != nil {
 			log.Println(err)
@@ -288,7 +410,7 @@ func LoadParcelData(
 		}
 
 		// generate new parcel type
-		circuitGroupPool[key-1].Parcels <- NewParcel(pid, cgid, supply, demand)
+		circuitGroupPool[key-1].Parcels <- NewParcel(pid, puse,  cgid, supply, demand)
 
 		// increment bar
 		bar.Increment()
@@ -358,6 +480,31 @@ func WriteCircuitGroupData(
 	// allocated iterator
 	i := 0
 
+	// write header strings to annual file
+    err = circuitGroupAnnualWriter.Write(
+		[]string{   "Circuit_Group_ID",
+                    "Circuit_Group_Count",
+                    "Annual_Net_Supply_MWh",
+                    "Annual_Max_Net_Supply_MWh"})
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
+    // generate hours string for headers
+    hrSlice := make([]string, hrs)
+    for h := 0; h < hrs; h++{
+        hrSlice[h] = strconv.Itoa(h+1)
+    }
+
+    // write header strings to hourly file
+    err = circuitGroupHourlyWriter.Write(
+        append([]string{"Circuit_Group_ID"}, hrSlice...))
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+
 	// loop through and write results
 	for r := range results {
 
@@ -418,16 +565,25 @@ func MaxParallelism() int {
 	return numCPU
 }
 
+/*TODO:
+Need to think about how to provide the demand profiles to the works
+so as not to encounter issues with concurrent memory access. It may 
+just make sense to create a new deep copy of the demand profile map 
+and pass that to each worker so that they can independently perform 
+the lookups themselves. 
+*/
+
 // Worker function
 func Worker(
 	workerWaitGroup *sync.WaitGroup,
-	supplyProfile, demandProfile *mat.Dense,
+	supplyProfile *mat.Dense,
+    demandProfileMap *ProfileMap,
 	circuitGroupPool []*CircuitGroup,
 	circuitGroupChan chan int,
 	results chan *CircuitGroup,
 	bar *pb.ProgressBar) {
 
-	// defer waitgroup closure
+    // defer waitgroup closure
 	defer workerWaitGroup.Done()
 
 	// pull keys from the circuit group channel
@@ -437,23 +593,34 @@ func Worker(
 		cg := circuitGroupPool[key]
 
 		// Allocate annual supply and demand vectors
-		parcelDemVec := mat.NewDense(1, cg.ParcelCount, nil)
-		parcelSupVec := mat.NewDense(1, cg.ParcelCount, nil)
+        parcelDemVec := mat.NewDense(1, hrs, nil)
+        parcelSupVec := mat.NewDense(1, cg.ParcelCount, nil)
 
 		// Allocate receiver matrices
-		parcelSupMat := mat.NewDense(hrs, cg.ParcelCount, nil)
+        parcelSupMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 		parcelDemMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 		parcelNetMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 
-		// Loop through parcels and populate matrix
+        // Loop through parcels and populate arrays
 		for i := 0; i < cg.ParcelCount; i++ {
-			p := <-cg.Parcels
-			parcelDemVec.Set(0, i, p.AnnualDemand)
-			parcelSupVec.Set(0, i, p.AnnualSupply)
-		}
 
-		// Compute matrix multiplications
-		parcelDemMat.Mul(demandProfile, parcelDemVec)
+            // Extract parcel
+            p := <-cg.Parcels
+
+            // Set Supply Variable
+			parcelSupVec.Set(0, i, p.AnnualSupply)
+
+            // Lookup parcel demand profile
+            profile, _ := demandProfileMap.Load(p.ParcelUsetype)
+
+            // Scale hourly profile by annual demand
+            parcelDemVec.Scale(p.AnnualDemand, profile.(*Profile).HourlyFraction)
+
+            // Compute demand matrix by vector multiplication (implicit row->col transpose)
+            parcelDemMat.SetCol(i, parcelDemVec.RawRowView(0))
+        }
+
+		// Compute supply matrix by vector dot product
 		parcelSupMat.Mul(supplyProfile, parcelSupVec)
 
 		// subtract demand matrix from supply matrix
@@ -487,7 +654,7 @@ func main() {
 	// start timer
 	start := time.Now()
 
-	// print status
+    // print status
 	log.Println("Parsing Arguments...")
 
 	// get current working directory
@@ -536,57 +703,58 @@ func main() {
 	log.Println("Loading Data...")
 
 	// parse input data
-	supplyProfile := LoadProfileData(*supplyProfilePath)
-	demandProfile := LoadProfileData(*demandProfilePath)
-	groups, circuitGroupPool, circuitGroupChan := LoadCircuitGroupData(*circuitGroupDataPath)
-	circuitGroupPool = LoadParcelData(circuitGroupPool, *parcelDataPath)
+    supplyProfile := LoadSupplyProfileData(*supplyProfilePath)
+    demandProfileMap := LoadDemandProfileData(*demandProfilePath)
+    groups, circuitGroupPool, circuitGroupChan := LoadCircuitGroupData(*circuitGroupDataPath)
+    circuitGroupPool = LoadParcelData(circuitGroupPool, *parcelDataPath)
 
-	// print status
-	log.Println("Beginning Work...")
+    // print status
+    log.Println("Beginning Work...")
 
-	// generate results channel
-	results := make(chan *CircuitGroup, groups)
+    // generate results channel
+    results := make(chan *CircuitGroup, groups)
 
 	// set worker pool size
-	limit := MaxParallelism()
+    limit := MaxParallelism()
 
 	// create mapper wait group
-	var workerWaitGroup sync.WaitGroup
+    var workerWaitGroup sync.WaitGroup
 
-	// initialize progress bar
-	bar := pb.StartNew(len(circuitGroupChan))
-	bar.ShowTimeLeft = false
+	// initialize progress bai
+    bar := pb.StartNew(len(circuitGroupChan))
+    bar.ShowTimeLeft = false
 
 	// enter parallel map loop
-	for m := 0; m <= limit; m++ {
+    for m := 0; m <= limit; m++ {
 
 		// add map worker to wait group
-		workerWaitGroup.Add(1)
+        workerWaitGroup.Add(1)
 
 		// launch map worker
-		go Worker(
-			&workerWaitGroup,
-			supplyProfile,
-			demandProfile,
-			circuitGroupPool,
-			circuitGroupChan,
-			results,
-			bar)
+        go Worker(
+            &workerWaitGroup,
+            supplyProfile,
+            demandProfileMap,
+            circuitGroupPool,
+            circuitGroupChan,
+            results,
+            bar)
 	}
 
 	// launch a monitor mapper to synchronize the wait group
-	go func() {
-		workerWaitGroup.Wait()
-		close(circuitGroupChan)
-	}()
+    go func() {
+        workerWaitGroup.Wait()
+        close(circuitGroupChan)
+    }()
 
 	// write results to file
-	WriteCircuitGroupData(results, *resultsOutputPath)
+    WriteCircuitGroupData(results, *resultsOutputPath)
 
 	// print status
-	bar.FinishPrint("\tFinished Work")
+    bar.FinishPrint("\tFinished Work")
 
 	// stop timer and print to console
 	elapsed := time.Since(start)
 	log.Printf("Elapsed Time: %s", elapsed)
+
 }
