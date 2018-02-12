@@ -1,23 +1,23 @@
 package prioritizationTool
 
 import (
-    "sync"
+	"sync"
 
-    "gonum.org/v1/gonum/mat"
-    "gopkg.in/cheggaaa/pb.v1"
+	"gonum.org/v1/gonum/mat"
+	"gopkg.in/cheggaaa/pb.v1"
 )
 
 // Worker function
 func Worker(
 	workerWaitGroup *sync.WaitGroup,
 	supplyProfile *mat.Dense,
-    demandProfileMap *ProfileMap,
+	demandProfileMap *ProfileMap,
 	circuitGroupPool []*CircuitGroup,
 	circuitGroupChan chan int,
 	results chan *CircuitGroup,
 	bar *pb.ProgressBar) {
 
-    // defer waitgroup closure
+	// defer waitgroup closure
 	defer workerWaitGroup.Done()
 
 	// pull keys from the circuit group channel
@@ -27,32 +27,32 @@ func Worker(
 		cg := circuitGroupPool[key]
 
 		// Allocate annual supply and demand vectors
-        parcelDemVec := mat.NewDense(1, hrs, nil)
-        parcelSupVec := mat.NewDense(1, cg.ParcelCount, nil)
+		parcelDemVec := mat.NewDense(1, hrs, nil)
+		parcelSupVec := mat.NewDense(1, cg.ParcelCount, nil)
 
 		// Allocate receiver matrices
-        parcelSupMat := mat.NewDense(hrs, cg.ParcelCount, nil)
+		parcelSupMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 		parcelDemMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 		parcelNetMat := mat.NewDense(hrs, cg.ParcelCount, nil)
 
-        // Loop through parcels and populate arrays
+		// Loop through parcels and populate arrays
 		for i := 0; i < cg.ParcelCount; i++ {
 
-            // Extract parcel
-            p := <-cg.Parcels
+			// Extract parcel
+			p := <-cg.Parcels
 
-            // Set Supply Variable
+			// Set Supply Variable
 			parcelSupVec.Set(0, i, p.AnnualSupply)
 
-            // Lookup parcel demand profile
-            profile, _ := demandProfileMap.Load(p.ParcelUsetype)
+			// Lookup parcel demand profile
+			profile, _ := demandProfileMap.Load(p.ParcelUsetype)
 
-            // Scale hourly profile by annual demand
-            parcelDemVec.Scale(p.AnnualDemand, profile.(*Profile).HourlyFraction)
+			// Scale hourly profile by annual demand
+			parcelDemVec.Scale(p.AnnualDemand, profile.(*Profile).HourlyFraction)
 
-            // Compute demand matrix by vector multiplication (implicit row->col transpose)
-            parcelDemMat.SetCol(i, parcelDemVec.RawRowView(0))
-        }
+			// Compute demand matrix by vector multiplication (implicit row->col transpose)
+			parcelDemMat.SetCol(i, parcelDemVec.RawRowView(0))
+		}
 
 		// Compute supply matrix by vector dot product
 		parcelSupMat.Mul(supplyProfile, parcelSupVec)
