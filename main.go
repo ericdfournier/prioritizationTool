@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
- 
-    "github.com/ericdfournier/prioritizationTool/pkg"
+
+	"github.com/ericdfournier/prioritizationTool/pkg"
 	"gopkg.in/cheggaaa/pb.v1"
 )
 
@@ -19,7 +19,7 @@ func main() {
 	// start timer
 	start := time.Now()
 
-    // print status
+	// print status
 	log.Println("Parsing Arguments...")
 
 	// get current working directory
@@ -68,55 +68,55 @@ func main() {
 	log.Println("Loading Data...")
 
 	// parse input data
-    supplyProfile := prioritizationTool.LoadSupplyProfileData(*supplyProfilePath)
-    demandProfileMap := prioritizationTool.LoadDemandProfileData(*demandProfilePath)
-    groups, circuitGroupPool, circuitGroupChan := prioritizationTool.LoadCircuitGroupData(*circuitGroupDataPath)
-    circuitGroupPool = prioritizationTool.LoadParcelData(circuitGroupPool, *parcelDataPath)
+	supplyProfile := prioritizationTool.LoadSupplyProfileData(*supplyProfilePath)
+	demandProfileMap := prioritizationTool.LoadDemandProfileData(*demandProfilePath)
+	groups, circuitGroupPool, circuitGroupChan := prioritizationTool.LoadCircuitGroupData(*circuitGroupDataPath)
+	circuitGroupPool = prioritizationTool.LoadParcelData(circuitGroupPool, *parcelDataPath)
 
-    // print status
-    log.Println("Beginning Work...")
+	// print status
+	log.Println("Beginning Work...")
 
-    // generate results channel
-    results := make(chan *prioritizationTool.CircuitGroup, groups)
+	// generate results channel
+	results := make(chan *prioritizationTool.CircuitGroup, groups)
 
 	// set worker pool size
-    limit := prioritizationTool.MaxParallelism()
+	limit := prioritizationTool.MaxParallelism()
 
 	// create mapper wait group
-    var workerWaitGroup sync.WaitGroup
+	var workerWaitGroup sync.WaitGroup
 
 	// initialize progress bai
-    bar := pb.StartNew(len(circuitGroupChan))
-    bar.ShowTimeLeft = false
+	bar := pb.StartNew(len(circuitGroupChan))
+	bar.ShowTimeLeft = false
 
 	// enter parallel map loop
-    for m := 0; m <= limit; m++ {
+	for m := 0; m <= limit; m++ {
 
 		// add map worker to wait group
-        workerWaitGroup.Add(1)
+		workerWaitGroup.Add(1)
 
 		// launch map worker
-        go prioritizationTool.Worker(
-            &workerWaitGroup,
-            supplyProfile,
-            demandProfileMap,
-            circuitGroupPool,
-            circuitGroupChan,
-            results,
-            bar)
+		go prioritizationTool.Worker(
+			&workerWaitGroup,
+			supplyProfile,
+			demandProfileMap,
+			circuitGroupPool,
+			circuitGroupChan,
+			results,
+			bar)
 	}
 
 	// launch a monitor mapper to synchronize the wait group
-    go func() {
-        workerWaitGroup.Wait()
-        close(circuitGroupChan)
-    }()
+	go func() {
+		workerWaitGroup.Wait()
+		close(circuitGroupChan)
+	}()
 
 	// write results to file
-    prioritizationTool.WriteCircuitGroupData(results, *resultsOutputPath)
+	prioritizationTool.WriteCircuitGroupData(results, *resultsOutputPath)
 
 	// print status
-    bar.FinishPrint("\tFinished Work")
+	bar.FinishPrint("\tFinished Work")
 
 	// stop timer and print to console
 	elapsed := time.Since(start)
